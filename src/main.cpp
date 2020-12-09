@@ -1,3 +1,4 @@
+#include <esp_task_wdt.h>
 #include <Arduino.h>
 
 #include <TFT_eSPI.h>
@@ -28,11 +29,18 @@ void setup_display();
 void testdrawtext(const char *text, uint16_t color);
 void tftPrintTest();
 
+//20 seconds WDT
+#define WDT_TIMEOUT 20
+
 void setup()
 {
   // put your setup code here, to run once:
   Serial.begin(115200);
   Serial.println("Starting.");
+  esp_task_wdt_init(WDT_TIMEOUT, true); //enable panic so ESP32 restarts
+  esp_task_wdt_add(NULL); //add current thread to WDT watch
+  // we shouldn't take longer than 20 seconds to initialize, but if influx
+  // client later hangs due to unrecoverable WiFi issue, then we'll reset
 
   setup_wifi();
   configTzTime(LOCAL_TZ, "pool.ntp.org", "time.nis.gov");
@@ -266,6 +274,7 @@ void loop()
       }
     }
   }
+  esp_task_wdt_reset(); // keep ESP alive
 }
 
 void setup_wifi()

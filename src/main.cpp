@@ -272,9 +272,9 @@ void loop()
         influxClient.writePoint(measurement);
         influxReportingTime += 15000;
       }
+      esp_task_wdt_reset(); // keep ESP alive
     }
   }
-  esp_task_wdt_reset(); // keep ESP alive
 }
 
 void setup_wifi()

@@ -6,6 +6,7 @@
 
 #include <WiFi.h>
 #include <InfluxDbClient.h>
+#include <PubSubClient.h>
 
 #include "Free_Fonts.h" // Include the header file attached to this sketch
 #include "config.h"
@@ -20,14 +21,28 @@ const int PM_RX_GPIO = 16;
 
 const char *ssid = WIFI_SSID;
 const char *password = WIFI_PASSWORD;
+unsigned long lastWifiConnectAttempt = 0;
+unsigned long wifiConnectAttemptInterval = 30000;
+unsigned long lastWifiForceReconnectAttempt = 0;
+unsigned long wifiForceReconnectAttemptInterval = 30000;
+
+const char *mqtt_server = MQTT_SERVER;
+const char *mqtt_user = MQTT_USER;
+const char *mqtt_password = MQTT_PASSWORD;
+
+WiFiClient espClient;
+PubSubClient mqtt_client(espClient);
 
 InfluxDBClient influxClient;
 unsigned long influxReportingTime;
 
 void setup_wifi();
+void maybe_reconnect_wifi();
+void maybe_force_reconnect_wifi();
 void setup_display();
 void testdrawtext(const char *text, uint16_t color);
 void tftPrintTest();
+void reconnect_mqtt();
 
 //20 seconds WDT
 #define WDT_TIMEOUT 20
@@ -44,6 +59,8 @@ void setup()
 
   setup_wifi();
   configTzTime(LOCAL_TZ, "pool.ntp.org", "time.nis.gov");
+
+  mqtt_client.setServer(mqtt_server, 1883);
 
   influxClient.setConnectionParamsV1(INFLUX_URL, INFLUX_DB, INFLUX_USER, INFLUX_PASSWORD);
 
@@ -220,6 +237,13 @@ void loop()
 {
   // put your main code here, to run repeatedly:
   // delay(1000);
+  maybe_reconnect_wifi();
+  if (!mqtt_client.connected())
+  {
+    reconnect_mqtt();
+  }
+  mqtt_client.loop();
+
   uint8_t buf[128];
   size_t n = Serial2.readBytes(buf, sizeof(buf));
   if (n > 0)
@@ -269,7 +293,26 @@ void loop()
         measurement.addField("bins_gt5_um_dl", s.bins.gt5um_dl);
         measurement.addField("bins_gt10_um_dl", s.bins.gt10um_dl);
         measurement.addTag("location", "living room");
-        influxClient.writePoint(measurement);
+        if (!influxClient.writePoint(measurement)) {
+          maybe_force_reconnect_wifi();
+        }
+
+        Point measurement2("wifi");
+        measurement2.addTag("device", "air_quality_monitor_livingroom");
+        measurement2.addField("rssi", (float)WiFi.RSSI());
+        if (!influxClient.writePoint(measurement2)) {
+          maybe_force_reconnect_wifi();
+        }
+        {
+          char str[128];
+          snprintf(str, sizeof(str), "%0.2f", pm2_5_aqi);
+          mqtt_client.publish("stat/air_quality_monitor/living room/pm2_5_lrapa_aqi", str);
+        }
+        {
+          char str[128];
+          snprintf(str, sizeof(str), "%d", s.standard.pm2_5_ugm3);
+          mqtt_client.publish("stat/air_quality_monitor/living room/pm2_5_ugm3", str);
+        }
         influxReportingTime += 15000;
       }
       esp_task_wdt_reset(); // keep ESP alive
@@ -297,4 +340,56 @@ void setup_wifi()
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
+}
+
+void maybe_reconnect_wifi()
+{
+  unsigned long currentMillis = millis();
+  // if WiFi is down, try reconnecting
+  if ((WiFi.status() != WL_CONNECTED) && (currentMillis - lastWifiConnectAttempt >= wifiConnectAttemptInterval)) {
+    Serial.print(millis());
+    Serial.println("Reconnecting to WiFi...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    lastWifiForceReconnectAttempt = currentMillis;
+    lastWifiConnectAttempt = currentMillis;
+  }
+}
+
+void maybe_force_reconnect_wifi()
+{
+  unsigned long currentMillis = millis();
+  // disconnect and reconnect wifi
+  if (currentMillis - lastWifiForceReconnectAttempt >= wifiForceReconnectAttemptInterval) {
+    Serial.print(millis());
+    Serial.println("Forcibly reconnecting to WiFi...");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    lastWifiForceReconnectAttempt = currentMillis;
+    lastWifiConnectAttempt = currentMillis;
+  }
+}
+
+void reconnect_mqtt()
+{
+  // Loop until we're reconnected
+  while (!mqtt_client.connected())
+  {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqtt_client.connect("air_quality_sensor", mqtt_user, mqtt_password))
+    {
+      Serial.println("connected");
+      // Subscribe
+      // client.subscribe("esp32/output");
+    }
+    else
+    {
+      Serial.print("failed, rc=");
+      Serial.print(mqtt_client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
 }

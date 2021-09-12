@@ -33,7 +33,7 @@ const char *mqtt_password = MQTT_PASSWORD;
 WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
 
-InfluxDBClient influxClient;
+InfluxDBClient influxClient(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN);
 unsigned long influxReportingTime;
 
 void setup_wifi();
@@ -62,7 +62,7 @@ void setup()
 
   mqtt_client.setServer(mqtt_server, 1883);
 
-  influxClient.setConnectionParamsV1(INFLUX_URL, INFLUX_DB, INFLUX_USER, INFLUX_PASSWORD);
+  // influxClient.setConnectionParamsV1(INFLUX_URL, INFLUX_DB, INFLUX_USER, INFLUX_PASSWORD);
 
   if (influxClient.validateConnection())
   {
